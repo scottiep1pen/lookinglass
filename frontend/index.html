@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PIT Chile Looking Glass</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+<header class="site-header">
+  <div class="header-top">
+    <a href="https://www.pitchile.cl/wp/evento2026/" target="_blank" class="header-brand">
+      <img src="https://www.pitchile.cl/wp/wp-content/uploads/2025/09/PitHubLatinoamerica.jpg" alt="PIT Chile" class="brand-logo-img" onerror="this.style.display='none'">
+      <div class="brand-text"><span class="brand-name">PIT Chile</span><span class="brand-sub">Looking Glass</span></div>
+    </a>
+    <span class="header-tag">LATAM Network Tools</span>
+    <nav class="header-nav">
+      <a href="https://www.pitchile.cl" target="_blank">pitchile.cl</a>
+      <a href="/api/docs">API</a>
+      <a id="hdr-github" href="#" target="_blank" style="display:none;">GitHub</a>
+    </nav>
+  </div>
+</header>
+<div class="header-sub">
+  <div class="header-sub-inner">
+    <a href="https://www.pitchile.cl/wp/evento2026/" target="_blank" class="nav-btn nav-btn--orange">Eventos PIT</a>
+    <a href="https://www.peeringdb.com/ix/1514" target="_blank" class="nav-btn">PeeringDB</a>
+    <a href="/api/docs" class="nav-btn">API REST</a>
+    <a id="sub-github" href="#" target="_blank" class="nav-btn" style="display:none;">GitHub</a>
+    <span class="header-sub-right">BGP &bull; Whois &bull; RPKI &bull; DNS &bull; Traceroute</span>
+  </div>
+</div>
+<div class="page-title-bar">
+  <div class="page-title-inner">
+    <h1>Looking Glass &amp; Network Tools</h1>
+    <p id="page-desc">Herramientas de diagnostico de red LATAM. Route servers en Chile, Mexico y region.</p>
+  </div>
+</div>
+<div class="stats-bar">
+  <div class="stats-bar-inner">
+    <div class="stat-item"><span class="stat-val" id="stat-servers">-</span><span class="stat-lbl">Route Servers</span></div>
+    <div class="stat-item"><span class="stat-val" id="stat-countries">-</span><span class="stat-lbl">Paises</span></div>
+    <div class="stat-item"><span class="stat-val">IPv4/IPv6</span><span class="stat-lbl">Protocolos</span></div>
+    <div class="stat-item"><span class="stat-val">RPKI</span><span class="stat-lbl">Validacion</span></div>
+  </div>
+</div>
+<main class="main-content">
+  <div class="container">
+    <div class="card">
+      <div class="tool-tabs-bar">
+        <button class="tool-tab active" data-tool="bgp"         onclick="switchTool('bgp')">BGP Route</button>
+        <button class="tool-tab"        data-tool="whois"       onclick="switchTool('whois')">Whois</button>
+        <button class="tool-tab"        data-tool="rpki"        onclick="switchTool('rpki')">RPKI</button>
+        <button class="tool-tab"        data-tool="dns"         onclick="switchTool('dns')">DNS</button>
+        <button class="tool-tab"        data-tool="prefix_info" onclick="switchTool('prefix_info')">Prefix Info</button>
+        <button class="tool-tab"        data-tool="servers"     onclick="switchTool('servers')">Route Servers</button>
+        <button class="tool-tab" id="tab-cloud" data-tool="cloud" onclick="switchTool('cloud')" style="display:none;">Cloud Status</button>
+        <button class="tool-tab" id="tab-latam" data-tool="latam" onclick="switchTool('latam')" style="display:none;">LATAM IXPs</button>
+      </div>
+
+      <div id="panel-bgp" class="tool-panel card-body">
+        <div class="info-box" style="margin-bottom:16px;">Consulta rutas BGP desde route servers publicos con peering en PIT Chile (RouteViews.org). IPv4, IPv6, sesiones y AS-Path.</div>
+        <div class="form-grid-3">
+          <div class="form-group"><label class="form-label">Route Server</label><select id="sel-server" class="form-select"></select><div class="form-hint" id="server-hint"></div></div>
+          <div class="form-group"><label class="form-label">Comando</label><select id="sel-command" class="form-select"></select><div class="form-hint" id="cmd-hint"></div></div>
+          <div class="form-group" id="bgp-query-group"><label class="form-label" id="bgp-query-label">Target</label><input type="text" id="inp-bgp" class="form-input" placeholder="Ej: 1.1.1.0/24" autocomplete="off" spellcheck="false"></div>
+        </div>
+        <div class="quick-examples" id="quick-examples"></div>
+        <div class="form-actions">
+          <button id="btn-bgp" class="btn btn-primary" onclick="runBGP()">Ejecutar Query</button>
+          <button class="btn btn-secondary" onclick="clearOutput()">Limpiar</button>
+          <span class="query-status" id="status-bgp"></span>
+        </div>
+      </div>
+
+      <div id="panel-whois" class="tool-panel card-body" style="display:none">
+        <div class="info-box" style="margin-bottom:16px;">Whois para IPs, prefijos y ASNs. Selecciona LACNIC, ARIN o RIPE automaticamente.</div>
+        <div class="form-group" style="margin-bottom:16px"><label class="form-label">IP, Prefijo o ASN</label><input type="text" id="inp-whois" class="form-input" placeholder="Ej: 45.68.16.0/22  o  AS61522" autocomplete="off"></div>
+        <div class="quick-examples" id="ex-whois"></div>
+        <div class="form-actions"><button class="btn btn-primary" onclick="runTool('whois','inp-whois','status-whois')">Consultar Whois</button><button class="btn btn-secondary" onclick="clearOutput()">Limpiar</button><span class="query-status" id="status-whois"></span></div>
+      </div>
+
+      <div id="panel-rpki" class="tool-panel card-body" style="display:none">
+        <div class="info-box" style="margin-bottom:16px;">Valida RPKI via RIPEstat. <strong>Valid</strong> = ROA coincide &bull; <strong>Invalid</strong> = no coincide &bull; <strong>Not Found</strong> = sin ROA.</div>
+        <div class="form-grid">
+          <div class="form-group"><label class="form-label">Prefijo (con mascara)</label><input type="text" id="inp-rpki-prefix" class="form-input" placeholder="Ej: 1.1.1.0/24" autocomplete="off"></div>
+          <div class="form-group"><label class="form-label">ASN origen (opcional)</label><input type="text" id="inp-rpki-asn" class="form-input" placeholder="Ej: 13335" autocomplete="off"></div>
+        </div>
+        <div class="quick-examples" id="ex-rpki"></div>
+        <div class="form-actions"><button class="btn btn-primary" onclick="runRPKI()">Validar RPKI</button><button class="btn btn-secondary" onclick="clearOutput()">Limpiar</button><span class="query-status" id="status-rpki"></span></div>
+      </div>
+
+      <div id="panel-dns" class="tool-panel card-body" style="display:none">
+        <div class="info-box" style="margin-bottom:16px;">Resolucion DNS desde el servidor del Looking Glass. A/AAAA para hostnames, PTR para IPs.</div>
+        <div class="form-group" style="margin-bottom:16px"><label class="form-label">Hostname o IP</label><input type="text" id="inp-dns" class="form-input" placeholder="Ej: pitchile.cl  o  45.68.16.1" autocomplete="off"></div>
+        <div class="quick-examples" id="ex-dns"></div>
+        <div class="form-actions"><button class="btn btn-primary" onclick="runTool('dns','inp-dns','status-dns')">Resolver DNS</button><button class="btn btn-secondary" onclick="clearOutput()">Limpiar</button><span class="query-status" id="status-dns"></span></div>
+      </div>
+
+      <div id="panel-prefix_info" class="tool-panel card-body" style="display:none">
+        <div class="info-box" style="margin-bottom:16px;">Calcula informacion de un prefijo IPv4/IPv6: red, broadcast, hosts, mascara, supernet.</div>
+        <div class="form-group" style="margin-bottom:16px"><label class="form-label">Prefijo IPv4 o IPv6</label><input type="text" id="inp-prefix" class="form-input" placeholder="Ej: 45.68.16.0/22  o  2801:14:9000::/48" autocomplete="off"></div>
+        <div class="quick-examples" id="ex-prefix_info"></div>
+        <div class="form-actions"><button class="btn btn-primary" onclick="runTool('prefix_info','inp-prefix','status-prefix')">Calcular</button><button class="btn btn-secondary" onclick="clearOutput()">Limpiar</button><span class="query-status" id="status-prefix"></span></div>
+      </div>
+
+      <div id="panel-servers" class="tool-panel" style="display:none; padding:0;">
+        <div class="table-wrap">
+          <table class="servers-table"><thead><tr><th>Nombre</th><th>Pais</th><th>Host</th><th>Tipo</th><th>Nota</th></tr></thead>
+          <tbody id="servers-tbody"><tr><td colspan="5" class="loading-cell">Cargando...</td></tr></tbody></table>
+        </div>
+      </div>
+
+      <div id="panel-cloud" class="tool-panel" style="display:none;">
+        <div class="card-body" style="padding-bottom:0;"><div class="info-box" style="margin-bottom:16px;">Estado en tiempo real de cloud providers con presencia en PIT Chile. Cache 2 minutos.</div></div>
+        <div id="cloud-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;padding:18px;"><div class="loading-cell" style="grid-column:1/-1;">Consultando status...</div></div>
+        <div style="padding:10px 18px;font-size:11px;color:#999;border-top:1px solid #e0e0e0;font-family:monospace;">APIs publicas de cada proveedor &bull; <span id="cloud-ts"></span></div>
+      </div>
+
+      <div id="panel-latam" class="tool-panel" style="display:none;">
+        <div class="card-body" style="padding-bottom:0;"><div class="info-box" style="margin-bottom:16px;">Ranking IXPs America Latina por miembros. PeeringDB, Abril 2026. PIT Chile destacado en naranja. <a href="https://www.peeringdb.com" target="_blank">PeeringDB &rarr;</a></div></div>
+        <div class="table-wrap">
+          <table class="servers-table">
+            <thead><tr><th style="width:32px;">#</th><th>IXP</th><th>Pais</th><th>Ciudad</th><th style="text-align:right;">Miembros</th><th style="min-width:120px;">Volumen</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td class="td-host">IX.br Sao Paulo</td><td>Brasil</td><td>Sao Paulo</td><td style="text-align:right;font-weight:600;">2.500</td><td><div style="height:5px;background:#378ADD;border-radius:3px;width:100%;"></div></td></tr>
+              <tr><td>2</td><td class="td-host">IX.br Rio de Janeiro</td><td>Brasil</td><td>Rio de Janeiro</td><td style="text-align:right;">820</td><td><div style="height:5px;background:#378ADD;border-radius:3px;width:33%;"></div></td></tr>
+              <tr><td>3</td><td class="td-host">IX.br Fortaleza</td><td>Brasil</td><td>Fortaleza</td><td style="text-align:right;">410</td><td><div style="height:5px;background:#378ADD;border-radius:3px;width:16%;"></div></td></tr>
+              <tr><td>4</td><td class="td-host">NAP.LA Buenos Aires</td><td>Argentina</td><td>Buenos Aires</td><td style="text-align:right;">280</td><td><div style="height:5px;background:#378ADD;border-radius:3px;width:11%;"></div></td></tr>
+              <tr style="background:#fef3eb;"><td>5</td><td><a href="https://www.peeringdb.com/ix/1514" target="_blank" style="color:#F37021;font-weight:600;">PIT Santiago - PIT Chile</a> <span style="background:#F37021;color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;">PIT</span></td><td>Chile</td><td>Santiago</td><td style="text-align:right;font-weight:600;color:#F37021;">153</td><td><div style="height:5px;background:#F37021;border-radius:3px;width:6%;"></div></td></tr>
+              <tr><td>6</td><td class="td-host">AR-IX CABASE Buenos Aires</td><td>Argentina</td><td>Buenos Aires</td><td style="text-align:right;">130</td><td><div style="height:5px;background:#378ADD;border-radius:3px;width:5%;"></div></td></tr>
+              <tr style="background:#fef3eb;"><td>7</td><td><a href="https://www.peeringdb.com/ix/4051" target="_blank" style="color:#F37021;font-weight:600;">PIT Mexico</a> <span style="background:#F37021;color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;">PIT</span></td><td>Mexico</td><td>Queretaro</td><td style="text-align:right;font-weight:600;color:#F37021;">120</td><td><div style="height:5px;background:#F37021;border-radius:3px;width:5%;"></div></td></tr>
+              <tr><td>8</td><td class="td-host">DE-CIX Mexico City</td><td>Mexico</td><td>Mexico City</td><td style="text-align:right;">95</td><td><div style="height:5px;background:#378ADD;border-radius:3px;width:4%;"></div></td></tr>
+              <tr style="background:#fef3eb;"><td>9</td><td><a href="https://www.peeringdb.com/ix/4351" target="_blank" style="color:#F37021;font-weight:600;">PIT Argentina</a> <span style="background:#F37021;color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;">PIT</span></td><td>Argentina</td><td>Buenos Aires</td><td style="text-align:right;font-weight:600;color:#F37021;">88</td><td><div style="height:5px;background:#F37021;border-radius:3px;width:4%;"></div></td></tr>
+              <tr style="background:#fef3eb;"><td>10</td><td><a href="https://www.peeringdb.com/ix/4770" target="_blank" style="color:#F37021;font-weight:600;">PIT Peru Lima</a> <span style="background:#F37021;color:#fff;font-size:9px;padding:1px 5px;border-radius:3px;">PIT</span></td><td>Peru</td><td>Lima</td><td style="text-align:right;font-weight:600;color:#F37021;">68</td><td><div style="height:5px;background:#F37021;border-radius:3px;width:3%;"></div></td></tr>
+              <tr><td>11</td><td class="td-host">NAP Colombia Bogota</td><td>Colombia</td><td>Bogota</td><td style="text-align:right;">55</td><td><div style="height:5px;background:#378ADD;border-radius:3px;width:2%;"></div></td></tr>
+              <tr><td>12</td><td class="td-host">IXPEC Ecuador</td><td>Ecuador</td><td>Quito</td><td style="text-align:right;">32</td><td><div style="height:5px;background:#378ADD;border-radius:3px;width:1%;"></div></td></tr>
+              <tr><td>13</td><td class="td-host">IXP Uruguay</td><td>Uruguay</td><td>Montevideo</td><td style="text-align:right;">28</td><td><div style="height:5px;background:#378ADD;border-radius:3px;width:1%;"></div></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div style="padding:10px 18px;font-size:11px;color:#999;border-top:1px solid #e0e0e0;font-family:monospace;">Fuente: PeeringDB &bull; Abril 2026 &bull; <a href="https://www.peeringdb.com/ix/1514" target="_blank">PIT Chile en PeeringDB</a></div>
+      </div>
+
+    </div>
+
+    <div class="card output-panel" id="output-panel" style="display:none">
+      <div class="card-header">
+        <div class="card-header-left"><span class="card-tag" id="output-tool-tag">RESULTADO</span><span class="card-title" id="output-title">Output</span></div>
+        <div class="rpki-badge" id="rpki-badge" style="display:none"></div>
+      </div>
+      <div class="output-toolbar">
+        <button class="tool-btn" onclick="copyOutput()">Copiar</button>
+        <button class="tool-btn" onclick="downloadOutput()">Descargar .txt</button>
+        <button class="tool-btn" id="btn-raw" onclick="toggleRaw()">Ver texto</button>
+        <span class="output-meta-bar" id="output-meta"></span>
+      </div>
+      <pre class="output-pre" id="output-pre"></pre>
+      <div id="raw-box" style="display:none;background:#fff;border-top:1px solid #e0e0e0;padding:16px 20px;font-family:monospace;font-size:12px;white-space:pre-wrap;word-break:break-all;color:#333;max-height:400px;overflow:auto;line-height:1.6;"></div>
+    </div>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-brand">PIT Chile &mdash; Hub de Latinoamerica</div>
+    <div class="footer-links">
+      <a href="https://www.pitchile.cl" target="_blank">pitchile.cl</a>
+      <a href="https://www.peeringdb.com/ix/1514" target="_blank">PeeringDB</a>
+      <a href="mailto:soporte@pitchile.cl">NOC</a>
+      <a href="/api/docs">API</a>
+      <a id="footer-github" href="#" target="_blank" style="display:none;">GitHub</a>
+    </div>
+    <div class="footer-note">Route servers publicos via RouteViews.org &bull; Solo lectura &bull; No usar con scripts automatizados &bull; PIT Chile &copy; 2026</div>
+  </div>
+</footer>
+<script src="/static/js/app.js"></script>
+</body>
+</html>

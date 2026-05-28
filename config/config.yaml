@@ -1,0 +1,306 @@
+# =============================================================================
+# PIT Chile Looking Glass - Configuracion Principal
+# =============================================================================
+# Todos los parametros configurables aqui. No modificar el codigo fuente.
+# =============================================================================
+# +GitHub
+
+server:
+  host: "0.0.0.0"
+  port: 8089
+  debug: false
+  version: "2.1.0"
+  title: "PIT Chile Looking Glass"
+  description: "Looking Glass LATAM - Route servers publicos desde Chile, Mexico y region."
+  contact_email: "noc@pitchile.cl"
+  logo_url: "/static/img/logo.png"
+  footer_text: "PIT Chile - Hub de Latinoamerica | Badajoz 45, Piso 17, Las Condes, Santiago"
+
+# Limites de seguridad
+security:
+  max_query_length: 100
+  telnet_timeout: 20
+  max_output_lines: 500
+  rate_limit_per_minute: 20
+  allowed_query_regex: '^[\d\.:/a-zA-Z_\-]+$'
+
+# Route servers disponibles
+# Probados desde el servidor: OK = responde, --- = no responde
+route_servers:
+
+  # --- Chile ---
+  - id: pit_scl
+    name: "PIT Santiago (IPv4/IPv6)"
+    group: "Chile"
+    host: "pit.scl.routeviews.org"
+    port: 23
+    type: frr
+    prompt: ">"
+    enabled: false
+    note: "Telnet bloqueado por proxy del hosting - usar rv3/rv4/rv5/rv6/eqix/linx"
+
+  # route-views.chile.routeviews.org -> timed out, deshabilitado
+  - id: rv_chile
+    name: "NIC.cl Chile (RouteViews)"
+    group: "Chile"
+    host: "route-views.chile.routeviews.org"
+    port: 23
+    type: frr
+    prompt: ">"
+    enabled: false
+    note: "Sin respuesta al momento de la prueba"
+
+  # --- Mexico ---
+  - id: pit_mex
+    name: "PIT Mexico Queretaro (IPv4/IPv6)"
+    group: "Mexico"
+    host: "pitmx.qro.routeviews.org"
+    port: 23
+    type: frr
+    prompt: ">"
+    enabled: false
+    note: "Telnet bloqueado por proxy del hosting - usar rv3/rv4/rv5/rv6/eqix/linx"
+
+  # --- Chile via API REST ---
+  - id: rv3_chile
+    name: "RouteViews3 - via API (peering PIT SCL)"
+    group: "Chile"
+    host: "route-views3.routeviews.org"
+    port: 23
+    type: frr
+    prompt: ">"
+    enabled: true
+    note: "Colector con peering en PIT Santiago - usa API REST HTTPS"
+
+  # --- Global / referencia ---
+  - id: rv2
+    name: "RouteViews2 Global (IPv4)"
+    group: "Global"
+    host: "route-views2.routeviews.org"
+    port: 23
+    type: frr
+    prompt: ">"
+    enabled: false
+    note: "Telnet bloqueado por proxy - no disponible en API REST aun"
+
+  # route-views3 -> timed out
+  - id: rv3
+    name: "RouteViews3 Global (IPv4/IPv6)"
+    group: "Global"
+    host: "route-views3.routeviews.org"
+    port: 23
+    type: frr
+    prompt: ">"
+    enabled: false
+    note: "Sin respuesta al momento de la prueba"
+
+  - id: rv4
+    name: "RouteViews4 Global (IPv4/IPv6)"
+    group: "Global"
+    host: "route-views4.routeviews.org"
+    port: 23
+    type: frr
+    prompt: ">"
+    enabled: true
+    note: "Colector global RouteViews - FRR 10.5.1"
+
+  - id: rv5
+    name: "RouteViews5 Global (IPv4/IPv6)"
+    group: "Global"
+    host: "route-views5.routeviews.org"
+    port: 23
+    type: frr
+    prompt: ">"
+    enabled: true
+    note: "Colector global RouteViews - FRR 10.5.1"
+
+  - id: rv6
+    name: "RouteViews6 Global (IPv6)"
+    group: "Global"
+    host: "route-views6.routeviews.org"
+    port: 23
+    type: frr
+    prompt: ">"
+    enabled: true
+    note: "Colector global RouteViews - FRR 10.5.1"
+
+  - id: rv_eqix
+    name: "Equinix Ashburn (RouteViews)"
+    group: "Global"
+    host: "route-views.eqix.routeviews.org"
+    port: 23
+    type: frr
+    prompt: ">"
+    enabled: true
+    note: "Colector RouteViews en Equinix Ashburn - FRR 10.2.1"
+
+  - id: rv_linx
+    name: "LINX Londres (RouteViews)"
+    group: "Global"
+    host: "route-views.linx.routeviews.org"
+    port: 23
+    type: frr
+    prompt: ">"
+    enabled: true
+    note: "Colector RouteViews en LINX Londres - FRR 10.5.1"
+
+# Comandos disponibles
+# Variables soportadas en cmd: {query}
+commands:
+  bgp_route:
+    label: "BGP Route"
+    description: "Muestra rutas BGP hacia un prefijo o IP"
+    frr:   "show ip bgp {query}"
+    cisco: "show ip bgp {query}"
+    juniper: "show route {query}"
+    input_placeholder: "Ej: 45.68.16.0/22"
+    input_label: "Prefijo o IP"
+
+  bgp_route_v6:
+    label: "BGP Route IPv6"
+    description: "Muestra rutas BGP IPv6 hacia un prefijo"
+    frr:   "show bgp ipv6 unicast {query}"
+    cisco: "show bgp ipv6 unicast {query}"
+    juniper: "show route {query}"
+    input_placeholder: "Ej: 2801:14:9000::/48"
+    input_label: "Prefijo IPv6"
+
+  bgp_summary:
+    label: "BGP Summary"
+    description: "Resumen de sesiones BGP del route server"
+    frr:   "show ip bgp summary"
+    cisco: "show ip bgp summary"
+    juniper: "show bgp summary"
+    input_placeholder: ""
+    input_label: ""
+    no_input: true
+
+  bgp_summary_v6:
+    label: "BGP Summary IPv6"
+    description: "Resumen de sesiones BGP IPv6"
+    frr:   "show bgp ipv6 unicast summary"
+    cisco: "show bgp ipv6 unicast summary"
+    juniper: "show bgp ipv6 summary"
+    input_placeholder: ""
+    input_label: ""
+    no_input: true
+
+  bgp_aspath:
+    label: "BGP AS Path"
+    description: "Muestra rutas que contienen un ASN en el path"
+    frr:   "show ip bgp regexp _{query}_"
+    cisco: "show ip bgp regexp _{query}_"
+    juniper: "show route aspath-regex .*{query}.*"
+    input_placeholder: "Ej: 263700"
+    input_label: "ASN"
+
+  ping:
+    label: "Ping"
+    description: "Ping desde el route server hacia un destino"
+    frr:   "ping {query}"
+    cisco: "ping {query}"
+    juniper: "ping {query} count 5"
+    input_placeholder: "Ej: 45.68.16.1"
+    input_label: "IP o hostname"
+
+  traceroute:
+    label: "Traceroute"
+    description: "Traceroute desde el route server hacia un destino"
+    frr:   "traceroute {query}"
+    cisco: "traceroute {query}"
+    juniper: "traceroute {query}"
+    input_placeholder: "Ej: 45.68.16.1"
+    input_label: "IP o hostname"
+
+# Apariencia
+ui:
+  primary_color: "#F37021"
+  secondary_color: "#d45f10"
+  accent_color: "#0066cc"
+  font_mono: "'JetBrains Mono', 'Fira Code', 'Courier New', monospace"
+  font_ui: "'Inter', 'Segoe UI', Arial, sans-serif"
+  max_output_height_px: 560
+  show_timestamps: true
+  show_server_info: true
+
+# Feature flags - habilitar/deshabilitar secciones de la UI
+features:
+  show_github: false           # mostrar link a GitHub en header y footer
+  show_latam_ranking: true    # mostrar tab LATAM IXPs
+  show_cloud_status: true     # mostrar tab Cloud Status
+  github_url: "https://github.com/pitchile/looking-glass"
+
+# Cache TTLs en segundos
+cache:
+  cloud_status_ttl: 120    # Cloud Status: 2 minutos
+  latam_ixps_ttl:   3600   # LATAM IXPs: 1 hora
+
+# Cloud providers para el panel Cloud Status
+# status_type: statuspage | gcp | rss
+cloud_providers:
+  - name: "Microsoft Azure"
+    short: "Azure"
+    asn: "8075"
+    status_url: "https://azurestatuscdn.azureedge.net/en-us/status/feed/"
+    status_type: "rss"
+    page_url: "https://azure.status.microsoft/en-us/status"
+    color: "#0078D4"
+    bgp_prefix: "13.107.0.0/16"
+    pit_maps_url: "https://www.pitchile.cl/wp/maps/"
+    enabled: true
+
+  - name: "Google Cloud"
+    short: "GCP"
+    asn: "15169"
+    status_url: "https://status.cloud.google.com/incidents.json"
+    status_type: "gcp"
+    page_url: "https://status.cloud.google.com"
+    color: "#4285F4"
+    bgp_prefix: "8.8.8.0/24"
+    enabled: true
+
+  - name: "Oracle Cloud"
+    short: "OCI"
+    asn: "31898"
+    status_url: "https://ocistatus.oraclecloud.com/api/v2/status.json"
+    status_type: "statuspage"
+    page_url: "https://ocistatus.oraclecloud.com"
+    color: "#C74634"
+    bgp_prefix: "132.145.0.0/16"
+    enabled: true
+
+  - name: "Amazon AWS"
+    short: "AWS"
+    asn: "16509"
+    status_url: "https://status.aws.amazon.com/rss/all.rss"
+    status_type: "rss"
+    page_url: "https://status.aws.amazon.com"
+    color: "#FF9900"
+    bgp_prefix: "54.239.0.0/17"
+    enabled: true
+
+  - name: "Cloudflare"
+    short: "CF"
+    asn: "13335"
+    status_url: "https://www.cloudflarestatus.com/api/v2/status.json"
+    status_type: "statuspage"
+    page_url: "https://www.cloudflarestatus.com"
+    color: "#F38020"
+    bgp_prefix: "1.1.1.0/24"
+    enabled: true
+
+  - name: "Akamai / Linode"
+    short: "Akamai"
+    asn: "20940"
+    status_url: "https://status.linode.com/api/v2/status.json"
+    status_type: "statuspage"
+    page_url: "https://status.linode.com"
+    color: "#009BDE"
+    bgp_prefix: "23.32.0.0/11"
+    enabled: true
+
+# RouteViews API (https://api.routeviews.org)
+# api_key: opcional - obtener en https://api.routeviews.org/member-area/
+#           con PeeringDB login. Mejora rate limit de 1 a 10 req/seg.
+routeviews:
+  api_key: ""

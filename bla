@@ -1,0 +1,50 @@
+python3 << 'EOF'
+path = 'backend/app.py'
+with open(path) as f:
+    c = f.read()
+
+old = '''        else:
+            return (
+                "% Comando '" + command_key + "' no disponible via API REST.\\n"
+                "% Use un route server con acceso telnet directo."
+            )'''
+
+new = '''        elif command_key == "ping":
+            import subprocess
+            target = query.strip()
+            result = subprocess.run(
+                ["ping", "-c", "5", "-W", "3", target],
+                capture_output=True, text=True, timeout=20)
+            out = result.stdout or result.stderr
+            return "ping desde " + host + " -> " + target + "\\n" + "-"*50 + "\\n" + out
+
+        elif command_key == "traceroute":
+            import subprocess
+            target = query.strip()
+            result = subprocess.run(
+                ["traceroute", "-w", "3", "-m", "20", target],
+                capture_output=True, text=True, timeout=45)
+            out = result.stdout or result.stderr
+            return "traceroute desde servidor LG -> " + target + "\\n" + "-"*50 + "\\n" + out
+
+        else:
+            return "% Comando '" + command_key + "' no disponible via API REST."'''
+
+if old in c:
+    c = c.replace(old, new)
+    print("OK")
+else:
+    print("No encontro bloque")
+
+import ast
+try:
+    ast.parse(c)
+    print("Sintaxis OK")
+except SyntaxError as e:
+    print("Error", e.lineno, e.msg)
+
+with open(path, 'w') as f:
+    f.write(c)
+EOF
+
+pkill -f app.py && sleep 1 && cd backend && python3 app.py &

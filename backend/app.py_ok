@@ -1,0 +1,775 @@
+#!/usr/bin/env python3
+"""
+PIT Chile Looking Glass - Backend v2.1
+Herramientas: BGP (via RouteViews API REST), Whois, RPKI, DNS, Prefix Info
+
+Autor: PIT Chile NOC
++GitHub
+"""
+
+import asyncio
+import ipaddress
+import json
+import logging
+import re
+import socket
+import time
+import urllib.parse
+import urllib.request
+import urllib.error
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+import yaml
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+CONFIG_PATH = Path(__file__).parent.parent / "config" / "config.yaml"
+
+def load_config() -> dict:
+    with open(CONFIG_PATH) as f:
+        return yaml.safe_load(f)
+
+CFG = load_config()
+
+logging.basicConfig(
+    level=logging.DEBUG if CFG["server"]["debug"] else logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+log = logging.getLogger("pit-lg")
+
+_rate_store: dict[str, list[float]] = {}
+
+def check_rate_limit(ip: str) -> bool:
+    limit = CFG["security"]["rate_limit_per_minute"]
+    now = time.time()
+    hits = [t for t in _rate_store.get(ip, []) if now - t < 60]
+    if len(hits) >= limit:
+        return False
+    hits.append(now)
+    _rate_store[ip] = hits
+    return True
+
+# ---------------------------------------------------------------------------
+# RouteViews API REST (HTTPS - funciona detras de cualquier proxy)
+# Docs: https://api.routeviews.org/docs/
+# ---------------------------------------------------------------------------
+
+RV_API_BASE = "https://api.routeviews.org"
+RV_API_KEY  = CFG.get("routeviews", {}).get("api_key", "")
+
+# hostname telnet -> slug de la API REST
+RV_COLLECTOR_MAP = {
+    "pit.scl.routeviews.org":          None,
+    "pitmx.qro.routeviews.org":        None,
+    "route-views2.routeviews.org":     None,
+    "route-views3.routeviews.org":     "route-views3",
+    "route-views4.routeviews.org":     "route-views4",
+    "route-views5.routeviews.org":     "route-views5",
+    "route-views6.routeviews.org":     "route-views6",
+    "route-views.eqix.routeviews.org": "route-views.eqix",
+    "route-views.linx.routeviews.org": "route-views.linx",
+    "ix-br2.gru.routeviews.org":       "ix-br2.gru",
+}
+
+
+NL = "\n"  # newline helper
+
+
+def rv_api_get(path: str, timeout: int = 15) -> dict:
+    url = f"{RV_API_BASE}{path}"
+    headers = {"Accept": "application/json", "User-Agent": "PIT-Chile-LG/2.1"}
+    if RV_API_KEY:
+        headers["Api-Key"] = RV_API_KEY
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
+def format_bgp_routes(data, query: str) -> str:
+    if not data:
+        return '% Network not in table'
+    # /asn/ endpoint retorna lista de strings (prefijos)
+    if isinstance(data, list) and data and isinstance(data[0], str):
+        lines = [
+            'Prefijos originados por AS' + str(query),
+            'Total: ' + str(len(data)) + ' prefijos',
+            '-' * 50,
+        ]
+        for pfx in data[:300]:
+            lines.append('*>  ' + str(pfx))
+        if len(data) > 300:
+            lines.append('... (' + str(len(data)) + ' total, mostrando 300)')
+        return NL.join(lines)
+    # /prefix/ endpoint retorna lista de dicts con reporting_peers
+    entries = data if isinstance(data, list) else [data]
+    lines = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        prefix     = entry.get('prefix', query)
+        origin_asn = entry.get('origin_asn', '')
+        rpki_state = entry.get('rpki_state', 'unknown')
+        peers      = entry.get('reporting_peers', [])
+        lines.append('BGP routing table entry for ' + str(prefix))
+        lines.append('Origin ASN : ' + str(origin_asn))
+        lines.append('RPKI state : ' + str(rpki_state).upper())
+        lines.append('Paths      : (' + str(len(peers)) + ' reporting peers)')
+        lines.append('')
+        lines.append('{:<3} {:<18} {:<16} {}'.format('', 'Peer ASN', 'Peer IP', 'AS_PATH'))
+        lines.append('-' * 70)
+        for i, peer in enumerate(peers[:50]):
+            best = '*>' if i == 0 else '* '
+            lines.append('{:<3} {:<18} {:<16} {}'.format(
+                best, str(peer.get('peer_asn','')), str(peer.get('peer_addr','')), str(peer.get('as_path',''))))
+            comms = str(peer.get('communities', ''))
+            if comms:
+                lines.append('    Community: ' + comms)
+        if len(peers) > 50:
+            lines.append('... (' + str(len(peers)) + ' peers total, mostrando 50)')
+        roas = entry.get('rpki_roas', [])
+        if roas:
+            lines.append('')
+            lines.append('ROAs:')
+            for roa in roas:
+                lines.append('  ' + str(roa.get('prefix','')) +
+                              ' max/' + str(roa.get('max_length','')) +
+                              ' AS' + str(roa.get('asn','')) +
+                              ' TA:' + str(roa.get('ta','')))
+    return NL.join(lines) if lines else '% Network not in table'
+
+
+def format_bgp_summary(data: dict) -> str:
+    lines = [
+        "BGP router identifier 0.0.0.0",
+        "{:<18} {:>3} {:>8} {:>14}".format("Neighbor", "V", "AS", "State/PfxRcd"),
+        "-" * 60,
+    ]
+    peers = data.get("data", {})
+    if isinstance(peers, list):
+        for p in peers:
+            neighbor = str(p.get("peer_ip", ""))
+            asn      = str(p.get("peer_asn", ""))
+            pfx      = str(p.get("prefix_count", p.get("routes", "?")))
+            lines.append("{:<18} {:>3} {:>8} {:>14}".format(neighbor, "4", asn, pfx))
+    return "\n".join(lines)
+
+
+async def bgp_query_api(rs: dict, command_key: str, query: str) -> str:
+    host      = rs["host"]
+    collector = RV_COLLECTOR_MAP.get(host)
+    timeout   = CFG["security"]["telnet_timeout"]
+
+    if collector is None:
+        cmd = build_command(rs, command_key, query)
+        log.debug("Telnet fallback: %s cmd=%r", host, cmd)
+        return await telnet_query(
+            host=host, port=rs.get("port", 23),
+            commands=[cmd], prompt=rs.get("prompt", ">"),
+            timeout=timeout)
+
+    try:
+        if command_key in ("bgp_route", "bgp_route_v6"):
+            pfx  = urllib.parse.quote(query, safe="")
+            data = await asyncio.to_thread(rv_api_get,
+                "/prefix/" + pfx + "?collector=" + collector, timeout)
+            return format_bgp_routes(data, query)
+
+        elif command_key == "bgp_aspath":
+            data = await asyncio.to_thread(rv_api_get,
+                "/asn/" + query + "?collector=" + collector, timeout)
+            return format_bgp_routes(data, query)
+
+        elif command_key in ("bgp_summary", "bgp_summary_v6"):
+            data = await asyncio.to_thread(rv_api_get,
+                "/rib/peers?collector=" + collector, timeout)
+            return format_bgp_summary(data)
+
+        elif command_key == "ping":
+            import subprocess
+            target = query.strip()
+            result = subprocess.run(
+                ["ping", "-c", "5", "-W", "3", target],
+                capture_output=True, text=True, timeout=20)
+            out = result.stdout or result.stderr
+            return "ping desde " + host + " -> " + target + "\n" + "-"*50 + "\n" + out
+
+        elif command_key == "traceroute":
+            import subprocess
+            target = query.strip()
+            result = subprocess.run(
+                ["traceroute", "-w", "3", "-m", "20", target],
+                capture_output=True, text=True, timeout=45)
+            out = result.stdout or result.stderr
+            return "traceroute desde servidor LG -> " + target + "\n" + "-"*50 + "\n" + out
+
+        else:
+            return "% Comando '" + command_key + "' no disponible via API REST."
+
+    except Exception as e:
+        return "% Error consultando RouteViews API: " + str(e) + "\n% Intente con otro route server."
+
+
+async def telnet_query(host: str, port: int, commands: list,
+                       prompt: str, timeout: int) -> str:
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=timeout)
+    except asyncio.TimeoutError:
+        raise RuntimeError("Timeout conectando a " + host + ":" + str(port))
+    except Exception as e:
+        raise RuntimeError("Error conectando a " + host + ":" + str(port) + ": " + str(e))
+
+    parts = []
+
+    async def read_until_prompt(p: str, t: int) -> str:
+        buf = b""
+        deadline = asyncio.get_event_loop().time() + t
+        while True:
+            remaining = deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                break
+            try:
+                chunk = await asyncio.wait_for(reader.read(4096), timeout=min(remaining, 2.0))
+                if not chunk:
+                    break
+                buf += chunk
+                if p.encode() in buf:
+                    break
+            except asyncio.TimeoutError:
+                break
+        return buf.decode("utf-8", errors="replace")
+
+    try:
+        await read_until_prompt(prompt, timeout)
+        for cmd in commands:
+            writer.write((cmd + "\n").encode())
+            await writer.drain()
+            parts.append(await read_until_prompt(prompt, timeout))
+        writer.write(b"exit\n")
+        await writer.drain()
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+
+    raw = "\n".join(parts)
+    raw = re.sub(r'\x1b\[[0-9;]*[mKHJ]', '', raw)
+    raw = re.sub(r'\r', '', raw)
+
+    if raw.strip().startswith("HTTP/") and "400" in raw[:50]:
+        raise RuntimeError(
+            "Proxy HTTP interceptando conexion telnet a " + host + ":" + str(port) + ". "
+            "Seleccione un route server que use API REST (rv3, rv4, rv5, rv6, eqix, linx)."
+        )
+
+    lines = raw.splitlines()
+    max_lines = CFG["security"]["max_output_lines"]
+    if len(lines) > max_lines:
+        lines = lines[:max_lines] + ["... (truncado a " + str(max_lines) + " lineas)"]
+    return "\n".join(lines)
+
+# ---------------------------------------------------------------------------
+# Herramientas directas
+# ---------------------------------------------------------------------------
+
+def run_whois(query: str) -> str:
+    query = query.strip()
+    server = "whois.lacnic.net"
+    try:
+        ip = ipaddress.ip_address(query.split("/")[0])
+        first = int(str(ip).split(".")[0]) if ip.version == 4 else 0
+        if first in range(1, 10) or first in range(100, 126):
+            server = "whois.arin.net"
+        elif first >= 193:
+            server = "whois.ripe.net"
+    except ValueError:
+        if query.upper().startswith("AS"):
+            asn = int(re.sub(r'[^0-9]', '', query))
+            server = "whois.arin.net" if asn < 27648 else "whois.lacnic.net"
+        else:
+            server = "whois.iana.org"
+    try:
+        s = socket.create_connection((server, 43), timeout=12)
+        s.sendall((query + "\r\n").encode())
+        result = b""
+        s.settimeout(10)
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            result += chunk
+        s.close()
+        output = result.decode("utf-8", errors="replace")
+        return "% Whois server: " + server + "\n% Query      : " + query + "\n" + "=" * 60 + "\n" + output
+    except Exception as e:
+        raise RuntimeError("Error en whois (" + server + "): " + str(e))
+
+
+def fetch_rdap(query: str) -> dict:
+    query = query.strip()
+    is_asn = query.upper().startswith("AS")
+    if is_asn:
+        asn = re.sub(r'[^0-9]', '', query)
+        urls = [
+            "https://rdap.lacnic.net/rdap/autnum/" + asn,
+            "https://rdap.arin.net/registry/autnum/" + asn,
+            "https://rdap.db.ripe.net/autnum/" + asn,
+        ]
+    else:
+        target = query.split("/")[0]
+        urls = [
+            "https://rdap.lacnic.net/rdap/ip/" + target,
+            "https://rdap.arin.net/registry/ip/" + target,
+            "https://rdap.db.ripe.net/ip/" + target,
+        ]
+    last_err = ""
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers={
+                "Accept": "application/json",
+                "User-Agent": "PIT-Chile-LG/2.1"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                return json.loads(resp.read())
+        except Exception as e:
+            last_err = str(e)
+            continue
+    raise RuntimeError("RDAP no disponible: " + last_err)
+
+
+def fetch_rpki(prefix: str, asn: str = "") -> dict:
+    asn_clean = re.sub(r'[^0-9]', '', asn) if asn else ""
+    prefix_enc = urllib.parse.quote(prefix, safe="")
+    urls_to_try = []
+    if asn_clean:
+        urls_to_try.append(
+            "https://stat.ripe.net/data/rpki-validation/data.json"
+            "?resource=" + asn_clean + "&prefix=" + prefix_enc
+        )
+    urls_to_try.append(
+        "https://stat.ripe.net/data/rpki-validation/data.json"
+        "?resource=0&prefix=" + prefix_enc
+    )
+    last_err = ""
+    for url in urls_to_try:
+        try:
+            req = urllib.request.Request(url, headers={
+                "Accept": "application/json",
+                "User-Agent": "PIT-Chile-LG/2.1"})
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                data = json.loads(resp.read())
+                if "data" in data:
+                    d     = data["data"]
+                    state = d.get("status", "unknown")
+                    roas  = d.get("validating_roas", [])
+                    return {
+                        "state":           state,
+                        "prefix":          prefix,
+                        "asn":             asn_clean or "any",
+                        "source":          "RIPEstat",
+                        "validating_roas": roas,
+                    }
+        except Exception as e:
+            last_err = str(e)
+            continue
+    raise RuntimeError("RPKI no disponible: " + last_err)
+
+
+def dns_lookup(query: str) -> str:
+    query = query.strip()
+    lines = ["DNS Lookup : " + query, "=" * 50]
+    try:
+        ip = ipaddress.ip_address(query)
+        try:
+            ptr = socket.gethostbyaddr(str(ip))
+            lines.append("PTR   : " + ptr[0])
+            for alias in ptr[1]:
+                lines.append("ALIAS : " + alias)
+        except socket.herror:
+            lines.append("PTR   : (sin registro PTR)")
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(query, None)
+            seen = set()
+            for info in infos:
+                addr = info[4][0]
+                if addr not in seen:
+                    seen.add(addr)
+                    family = "AAAA  " if info[0] == socket.AF_INET6 else "A     "
+                    lines.append(family + ": " + addr)
+            lines.append("")
+            for addr in seen:
+                try:
+                    ptr = socket.gethostbyaddr(addr)
+                    lines.append("PTR   : " + addr + " -> " + ptr[0])
+                except Exception:
+                    pass
+        except socket.gaierror as e:
+            lines.append("ERROR : " + str(e))
+    return "\n".join(lines)
+
+
+def prefix_info(prefix: str) -> str:
+    try:
+        net = ipaddress.ip_network(prefix, strict=False)
+        hosts_list = list(net.hosts()) if net.num_addresses <= 512 else []
+        lines = [
+            "Prefix    : " + str(net),
+            "Version   : IPv" + str(net.version),
+        ]
+        if net.version == 4:
+            lines += [
+                "Netmask   : " + str(net.netmask),
+                "Wildcard  : " + str(net.hostmask),
+            ]
+        lines.append("Network   : " + str(net.network_address))
+        if net.version == 4:
+            lines.append("Broadcast : " + str(net.broadcast_address))
+        if hosts_list:
+            lines += [
+                "First host: " + str(hosts_list[0]),
+                "Last host : " + str(hosts_list[-1]),
+            ]
+        usable = net.num_addresses - 2 if net.version == 4 and net.prefixlen < 31 else net.num_addresses
+        lines += [
+            "Hosts     : " + "{:,}".format(usable),
+            "Is private: " + str(net.is_private),
+            "Is global : " + str(net.is_global),
+        ]
+        if net.prefixlen > 8:
+            lines.append("Supernet  : " + str(net.supernet()))
+        if net.version == 4 and net.prefixlen < 24:
+            count = 2 ** (24 - net.prefixlen)
+            lines.append("Subnets/24: " + "{:,}".format(count))
+        return "\n".join(lines)
+    except ValueError as e:
+        raise RuntimeError("Prefijo invalido: " + str(e))
+
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
+
+app = FastAPI(
+    title=CFG["server"]["title"],
+    description=CFG["server"]["description"],
+    version=CFG.get("server", {}).get("version", "2.1.0"),
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    swagger_ui_parameters={
+        "primaryColor": CFG.get("ui", {}).get("primary_color", "#F37021"),
+        "tryItOutEnabled": True,
+    },
+)
+
+app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                   allow_methods=["GET", "POST"], allow_headers=["*"])
+
+STATIC_DIR = Path(__file__).parent.parent / "frontend" / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+def get_rs(rs_id: str) -> dict:
+    for rs in CFG["route_servers"]:
+        if rs["id"] == rs_id and rs.get("enabled", True):
+            return rs
+    raise HTTPException(status_code=404, detail="Route server '" + rs_id + "' no encontrado")
+
+
+def build_command(rs: dict, command_key: str, query: str) -> str:
+    cmds = CFG["commands"]
+    if command_key not in cmds:
+        raise HTTPException(status_code=400, detail="Comando '" + command_key + "' no existe")
+    cmd_cfg = cmds[command_key]
+    rs_type = rs.get("type", "frr")
+    cmd_template = cmd_cfg.get(rs_type) or cmd_cfg.get("frr")
+    if not cmd_template:
+        raise HTTPException(status_code=400, detail="Comando no soportado para tipo '" + rs_type + "'")
+    return cmd_template.replace("{query}", query.strip())
+
+
+def validate_query(query: str):
+    max_len = CFG["security"]["max_query_length"]
+    if len(query) > max_len:
+        raise HTTPException(status_code=400, detail="Query demasiado largo (max " + str(max_len) + ")")
+    pattern = CFG["security"]["allowed_query_regex"]
+    if not re.match(pattern, query):
+        raise HTTPException(status_code=400, detail="Query contiene caracteres no permitidos")
+
+
+class BGPQueryRequest(BaseModel):
+    route_server_id: str
+    command: str
+    query: Optional[str] = ""
+
+
+class ToolRequest(BaseModel):
+    tool: str
+    query: str
+    asn: Optional[str] = ""
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    return HTMLResponse((Path(__file__).parent.parent / "frontend" / "index.html").read_text())
+
+
+@app.get("/api/config")
+async def api_config():
+    servers = [
+        {"id": rs["id"], "name": rs["name"], "group": rs["group"],
+         "note": rs.get("note", ""), "type": rs.get("type", "frr")}
+        for rs in CFG["route_servers"] if rs.get("enabled", True)
+    ]
+    commands = {
+        k: {"label": v["label"], "description": v["description"],
+            "input_placeholder": v.get("input_placeholder", ""),
+            "input_label": v.get("input_label", ""),
+            "no_input": v.get("no_input", False)}
+        for k, v in CFG["commands"].items()
+    }
+    return {
+        "title":         CFG["server"]["title"],
+        "description":   CFG["server"]["description"],
+        "contact":       CFG["server"]["contact_email"],
+        "footer":        CFG["server"]["footer_text"],
+        "ui":            CFG["ui"],
+        "route_servers": servers,
+        "commands":      commands,
+        "features":      CFG.get("features", {
+            "show_github":        True,
+            "show_latam_ranking": True,
+            "show_cloud_status":  True,
+            "github_url":         "https://github.com/pitchile/looking-glass",
+        }),
+    }
+
+
+@app.post("/api/query")
+async def api_bgp_query(req: BGPQueryRequest, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Rate limit excedido.")
+    rs = get_rs(req.route_server_id)
+    if req.query:
+        validate_query(req.query)
+    cmd = build_command(rs, req.command, req.query or "")
+    log.info("[%s] BGP RS=%s CMD=%s Q=%r", client_ip, req.route_server_id, req.command, req.query)
+    ts = datetime.utcnow().isoformat() + "Z"
+    t0 = time.monotonic()
+    try:
+        output = await bgp_query_api(rs, req.command, req.query or "")
+        return {"ok": True, "route_server": rs["name"], "host": rs["host"],
+                "command": cmd, "output": output,
+                "timestamp": ts, "elapsed_s": round(time.monotonic() - t0, 2)}
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.post("/api/tool")
+async def api_tool(req: ToolRequest, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="Rate limit excedido.")
+    query = req.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Query vacio")
+    validate_query(query)
+    log.info("[%s] TOOL=%s Q=%r", client_ip, req.tool, query)
+    ts = datetime.utcnow().isoformat() + "Z"
+    t0 = time.monotonic()
+
+    try:
+        if req.tool == "whois":
+            output = await asyncio.to_thread(run_whois, query)
+            return {"ok": True, "tool": "whois", "query": query,
+                    "output": output, "timestamp": ts,
+                    "elapsed_s": round(time.monotonic() - t0, 2)}
+
+        elif req.tool == "rdap":
+            data = await asyncio.to_thread(fetch_rdap, query)
+            lines = ["RDAP: " + query, "=" * 50,
+                     "Handle  : " + data.get("handle", "-"),
+                     "Name    : " + data.get("name", "-"),
+                     "Type    : " + data.get("objectClassName", "-")]
+            if "startAddress" in data:
+                lines += ["Start   : " + data["startAddress"],
+                          "End     : " + data["endAddress"]]
+            for e in data.get("entities", []):
+                roles = ", ".join(e.get("roles", []))
+                vcard = e.get("vcardArray", [None, []])[1] if e.get("vcardArray") else []
+                name = next((v[3] for v in vcard if v[0] == "fn"), e.get("handle", ""))
+                lines.append("Entity  : " + name + " (" + roles + ")")
+            lines += ["", json.dumps(data, indent=2, ensure_ascii=False)]
+            return {"ok": True, "tool": "rdap", "query": query,
+                    "output": "\n".join(lines), "data": data, "timestamp": ts,
+                    "elapsed_s": round(time.monotonic() - t0, 2)}
+
+        elif req.tool == "rpki":
+            if "/" not in query:
+                raise HTTPException(status_code=400,
+                    detail="RPKI requiere prefijo con mascara. Ej: 45.68.16.0/22")
+            data = await asyncio.to_thread(fetch_rpki, query, req.asn or "")
+            state = data.get("state", "unknown")
+            lines = [
+                "RPKI Validation : " + query,
+                "ASN             : AS" + str(req.asn) if req.asn else "",
+                "Source          : " + data.get("source", "RIPEstat"),
+                "=" * 50,
+                "Estado          : " + state.upper(),
+            ]
+            for roa in data.get("validating_roas", []):
+                lines.append("ROA  : " + str(roa.get("prefix", "")) +
+                              " max/" + str(roa.get("max_length", "")) +
+                              " AS" + str(roa.get("asn", "")))
+            lines += ["", json.dumps(data, indent=2, ensure_ascii=False)]
+            return {"ok": True, "tool": "rpki", "query": query,
+                    "output": "\n".join(l for l in lines if l is not None),
+                    "state": state, "timestamp": ts,
+                    "elapsed_s": round(time.monotonic() - t0, 2)}
+
+        elif req.tool == "dns":
+            output = await asyncio.to_thread(dns_lookup, query)
+            return {"ok": True, "tool": "dns", "query": query,
+                    "output": output, "timestamp": ts,
+                    "elapsed_s": round(time.monotonic() - t0, 2)}
+
+        elif req.tool == "prefix_info":
+            output = await asyncio.to_thread(prefix_info, query)
+            return {"ok": True, "tool": "prefix_info", "query": query,
+                    "output": output, "timestamp": ts,
+                    "elapsed_s": round(time.monotonic() - t0, 2)}
+
+        else:
+            raise HTTPException(status_code=400, detail="Herramienta '" + req.tool + "' no existe")
+
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@app.get("/api/asn/{asn}")
+async def api_asn_info(asn: str):
+    try:
+        data = await asyncio.to_thread(fetch_rdap, "AS" + asn)
+        return {"asn": asn, "name": data.get("name", ""), "ok": True}
+    except Exception as e:
+        return {"asn": asn, "name": "", "ok": False, "error": str(e)}
+
+
+@app.get("/api/servers")
+async def api_servers():
+    return [{"id": rs["id"], "name": rs["name"], "group": rs["group"],
+             "host": rs["host"], "type": rs.get("type", "frr"),
+             "note": rs.get("note", ""), "enabled": rs.get("enabled", True)}
+            for rs in CFG["route_servers"]]
+
+
+@app.get("/api/latam-ixps")
+async def api_latam_ixps():
+    return {"ok": True, "count": 0,
+            "note": "Ranking disponible en el tab LATAM IXPs del frontend", "ixps": []}
+
+
+# ---------------------------------------------------------------------------
+# Cloud Status
+# ---------------------------------------------------------------------------
+
+CLOUD_PROVIDERS = CFG.get("cloud_providers", [])
+CLOUD_PROVIDERS = [p for p in CLOUD_PROVIDERS if p.get("enabled", True)]
+
+_cloud_cache: dict = {}
+_cloud_cache_ts: float = 0
+CLOUD_CACHE_TTL = CFG.get("cache", {}).get("cloud_status_ttl", 120)
+
+
+def fetch_cloud_status(provider: dict) -> dict:
+    stype = provider.get("status_type", "statuspage")
+    try:
+        headers = {"Accept": "application/json, text/xml, */*",
+                   "User-Agent": "PIT-Chile-LG/2.1"}
+
+        if stype == "statuspage":
+            req = urllib.request.Request(provider["status_url"], headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read())
+            status_obj  = data.get("status", {})
+            indicator   = status_obj.get("indicator", "unknown")
+            description = status_obj.get("description", "Operational")
+
+        elif stype == "gcp":
+            req = urllib.request.Request(provider["status_url"], headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                raw = resp.read()
+            data   = json.loads(raw)
+            active = [i for i in data if not i.get("end")] if isinstance(data, list) else []
+            indicator   = "none" if not active else "minor"
+            description = "Operational" if not active else str(len(active)) + " incidente(s) activo(s)"
+
+        elif stype == "rss":
+            req = urllib.request.Request(provider["status_url"], headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+            keywords    = ["disruption", "outage", "degraded", "investigating", "incident"]
+            has_issue   = any(k in raw[:5000].lower() for k in keywords)
+            indicator   = "minor" if has_issue else "none"
+            description = "Posible incidente activo" if has_issue else "Operational"
+
+        else:
+            indicator, description = "unknown", "Tipo desconocido"
+
+        return {"indicator": indicator, "description": description or "Operational", "ok": True}
+
+    except Exception as e:
+        return {"indicator": "unknown", "description": "No disponible", "ok": False, "error": str(e)}
+
+
+@app.get("/api/cloud-status")
+async def api_cloud_status():
+    global _cloud_cache, _cloud_cache_ts
+    now = time.time()
+    if _cloud_cache and (now - _cloud_cache_ts) < CLOUD_CACHE_TTL:
+        return _cloud_cache
+
+    tasks    = [asyncio.to_thread(fetch_cloud_status, p) for p in CLOUD_PROVIDERS]
+    statuses = await asyncio.gather(*tasks, return_exceptions=True)
+    results  = []
+    for provider, status in zip(CLOUD_PROVIDERS, statuses):
+        if isinstance(status, Exception):
+            status = {"indicator": "unknown", "description": "Error", "ok": False}
+        results.append({
+            "name":         provider["name"],
+            "short":        provider.get("short", ""),
+            "asn":          provider.get("asn", ""),
+            "color":        provider.get("color", "#999"),
+            "page_url":     provider.get("page_url", ""),
+            "bgp_prefix":   provider.get("bgp_prefix", ""),
+            "pit_maps_url": provider.get("pit_maps_url"),
+            "indicator":    status.get("indicator", "unknown"),
+            "description":  status.get("description", ""),
+            "ok":           status.get("ok", False),
+        })
+
+    _cloud_cache    = {"ok": True, "providers": results,
+                       "cached_at": datetime.utcnow().isoformat() + "Z"}
+    _cloud_cache_ts = now
+    return _cloud_cache
+
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "service": CFG["server"]["title"],
+            "version": CFG.get("server", {}).get("version", "2.1.0")}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app",
+                host=CFG["server"]["host"],
+                port=CFG["server"]["port"],
+                reload=CFG["server"]["debug"],
+                log_level="debug" if CFG["server"]["debug"] else "info")

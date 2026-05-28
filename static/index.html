@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PIT Chile Looking Glass</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Barlow:wght@300;400;500;600;700&family=Barlow+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="site-header">
+  <div class="header-inner">
+    <div class="header-brand">
+      <div class="brand-logo">
+        <svg viewBox="0 0 40 40" class="logo-icon">
+          <polygon points="20,2 38,11 38,29 20,38 2,29 2,11" fill="none" stroke="#0066cc" stroke-width="2"/>
+          <polygon points="20,8 33,15 33,26 20,33 7,26 7,15" fill="#0066cc" opacity="0.15"/>
+          <text x="20" y="25" text-anchor="middle" fill="#0066cc" font-family="Barlow Condensed" font-weight="700" font-size="11">PIT</text>
+        </svg>
+        <div class="brand-text">
+          <span class="brand-name">PIT Chile</span>
+          <span class="brand-sub">Looking Glass</span>
+        </div>
+      </div>
+    </div>
+    <nav class="header-nav">
+      <span class="nav-tag">LATAM Route Servers</span>
+      <a href="https://www.pitchile.cl" target="_blank" class="nav-link">pitchile.cl</a>
+      <a href="/api/docs" class="nav-link nav-link--api">API</a>
+    </nav>
+  </div>
+</header>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-inner">
+    <div class="hero-grid-bg"></div>
+    <h1 class="hero-title">Looking Glass <span class="hero-accent">LATAM</span></h1>
+    <p class="hero-desc" id="hero-desc">Consulta rutas BGP desde route servers en Chile, Mexico, Argentina y Peru.</p>
+    <div class="hero-stats" id="hero-stats">
+      <div class="stat"><span class="stat-n" id="stat-servers">—</span><span class="stat-l">Route Servers</span></div>
+      <div class="stat"><span class="stat-n" id="stat-countries">—</span><span class="stat-l">Paises LATAM</span></div>
+      <div class="stat"><span class="stat-n">BGP</span><span class="stat-l">IPv4 / IPv6</span></div>
+      <div class="stat"><span class="stat-n">RPKI</span><span class="stat-l">Habilitado</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN -->
+<main class="main-content">
+  <div class="container">
+
+    <!-- QUERY PANEL -->
+    <section class="query-panel">
+      <div class="panel-header">
+        <span class="panel-tag">CONSULTA</span>
+        <h2 class="panel-title">Nueva Query</h2>
+      </div>
+
+      <div class="query-form">
+
+        <!-- Route server selector -->
+        <div class="form-row">
+          <div class="form-group form-group--wide">
+            <label class="form-label">Route Server</label>
+            <div class="select-wrapper">
+              <select id="sel-server" class="form-select">
+                <option value="">Cargando route servers...</option>
+              </select>
+              <span class="select-arrow">▼</span>
+            </div>
+            <div class="server-info" id="server-info"></div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Comando</label>
+            <div class="select-wrapper">
+              <select id="sel-command" class="form-select">
+                <option value="">Cargando comandos...</option>
+              </select>
+              <span class="select-arrow">▼</span>
+            </div>
+            <div class="cmd-desc" id="cmd-desc"></div>
+          </div>
+        </div>
+
+        <!-- Query input -->
+        <div class="form-row" id="query-row">
+          <div class="form-group form-group--full">
+            <label class="form-label" id="query-label">Target</label>
+            <div class="input-wrapper">
+              <input
+                type="text"
+                id="inp-query"
+                class="form-input"
+                placeholder="Ej: 8.8.8.0/24"
+                autocomplete="off"
+                spellcheck="false"
+              >
+              <span class="input-hint" id="input-hint"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick examples -->
+        <div class="quick-examples" id="quick-examples">
+          <span class="qe-label">Ejemplos rapidos:</span>
+          <button class="qe-btn" data-val="8.8.8.0/24">8.8.8.0/24</button>
+          <button class="qe-btn" data-val="1.1.1.0/24">1.1.1.0/24</button>
+          <button class="qe-btn" data-val="200.7.0.0/20">200.7.0.0/20</button>
+          <button class="qe-btn" data-val="263700">AS263700</button>
+          <button class="qe-btn" data-val="22927">AS22927</button>
+        </div>
+
+        <!-- Submit -->
+        <div class="form-actions">
+          <button id="btn-query" class="btn-query" onclick="runQuery()">
+            <span class="btn-icon">&#9654;</span>
+            <span>Ejecutar Query</span>
+          </button>
+          <button class="btn-clear" onclick="clearOutput()">Limpiar</button>
+          <div class="query-status" id="query-status"></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- OUTPUT PANEL -->
+    <section class="output-panel" id="output-panel" style="display:none">
+      <div class="panel-header output-header">
+        <div>
+          <span class="panel-tag">RESULTADO</span>
+          <h2 class="panel-title" id="output-title">Output</h2>
+        </div>
+        <div class="output-meta" id="output-meta"></div>
+      </div>
+      <div class="output-toolbar">
+        <button class="tool-btn" onclick="copyOutput()" title="Copiar">&#9113; Copiar</button>
+        <button class="tool-btn" onclick="downloadOutput()" title="Descargar">&#8595; Descargar</button>
+        <span class="output-lines" id="output-lines"></span>
+      </div>
+      <pre class="output-pre" id="output-pre"></pre>
+    </section>
+
+    <!-- SERVERS TABLE -->
+    <section class="servers-section">
+      <div class="panel-header">
+        <span class="panel-tag">INFRAESTRUCTURA</span>
+        <h2 class="panel-title">Route Servers Disponibles</h2>
+      </div>
+      <div class="table-wrap">
+        <table class="servers-table" id="servers-table">
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Pais / Region</th>
+              <th>Host</th>
+              <th>Tipo</th>
+              <th>Nota</th>
+            </tr>
+          </thead>
+          <tbody id="servers-tbody">
+            <tr><td colspan="5" class="loading-cell">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<!-- FOOTER -->
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-brand">
+      <svg viewBox="0 0 40 40" class="footer-logo-icon">
+        <polygon points="20,2 38,11 38,29 20,38 2,29 2,11" fill="none" stroke="#0066cc" stroke-width="2"/>
+        <text x="20" y="25" text-anchor="middle" fill="#0066cc" font-family="Barlow Condensed" font-weight="700" font-size="11">PIT</text>
+      </svg>
+      <span id="footer-text">PIT Chile - Hub de Latinoamerica</span>
+    </div>
+    <div class="footer-links">
+      <a href="https://www.pitchile.cl" target="_blank">pitchile.cl</a>
+      <a href="mailto:soporte@pitchile.cl" id="footer-contact">NOC</a>
+      <a href="/api/docs">API Docs</a>
+      <a href="/api/health">Health</a>
+    </div>
+    <div class="footer-note">
+      Route servers publicos via RouteViews.org &bull; Solo lectura &bull; No usar con scripts automatizados
+    </div>
+  </div>
+</footer>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>
