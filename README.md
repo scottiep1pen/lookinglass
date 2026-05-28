@@ -1,6 +1,6 @@
 # PIT Chile Looking Glass
 
-![Texto alternativo](https://github.com/scottiep1pen/lookinglass/blob/main/LG.png)
+![Screenshot](https://github.com/scottiep1pen/lookinglass/blob/main/Doc1.pdf)
 
 Looking Glass y herramientas de red LATAM.
 BGP, Whois, RPKI, DNS y Prefix Info desde route servers publicos
