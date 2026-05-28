@@ -9,7 +9,7 @@ con peering en Chile, Mexico, Argentina y Peru.
     Sitio    : https://www.pitchile.cl
     PeeringDB: https://www.peeringdb.com/ix/1514
     NOC      : noc@pitchile.cl
-    GitHub   : https://github.com/pitchile/looking-glass
+    GitHub   : https://github.com/scottiep1pen/lookinglass
 
 ---
 
