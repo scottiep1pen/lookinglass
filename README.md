@@ -23,7 +23,7 @@ con peering en Chile, Mexico, Argentina y Peru.
 
 ## Instalacion rapida
 
-    git clone https://github.com/pitchile/looking-glass.git
+    git clone https://github.com/scottiep1pen/looking-glass.git
     cd looking-glass
     pip install -r requirements.txt
     cd backend
